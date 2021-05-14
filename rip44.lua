@@ -7,28 +7,11 @@
 dofile("/etc/rip44.conf")
 
 if CONFIGURE_NETWORK then
-    -- these commands should get basic source routing working
-    -- it has a go at cleaning up and ignores errors, in case everything is already configured
-
-    -- packets to the local subnet use the normal routing table
-    os.execute("ip rule del to " .. LOCAL_SUBNET .. " table main priority 20 >/dev/null 2>&1")
-    os.execute("ip rule add to " .. LOCAL_SUBNET .. " table main priority 20")
-    -- packets from the local subnet that didn't find a route above will use table ROUTING_TABLE
-    os.execute("ip rule del from " .. LOCAL_SUBNET .. " table " .. ROUTING_TABLE .. " priority 25 >/dev/null 2>&1")
-    os.execute("ip rule add from " .. LOCAL_SUBNET .. " table " .. ROUTING_TABLE .. " priority 25")
-    -- bring up interface
     os.execute("ip tun del tunl0  >/dev/null 2>&1")
-    os.execute("ip tun add tunl0 mode ipip")
-    os.execute("ip link set dev tunl0 down >/dev/null 2>&1")
-    os.execute("ip tun change tunl0 pmtudisc ttl 64 mode ipip")
-    os.execute("ip link set dev tunl0 up")
-    -- this is an ugly hack to work around the luasock requirement that there be a dedicated IP for the listening interface
-    -- (why can't I get multicast without specifying an interface by IP address? am i missing something?)
-    -- if there is already an IP configured these will be secondary IPs so should not impact anything
-    -- if there is not, it will configure the network address on the interface, and also the multicast address so it can be used as the socket target interface
-    os.execute("ip addr add " .. LOCAL_SUBNET .. " dev tunl0")
-    os.execute("ip addr add " .. LISTEN_IP .. "/32 dev tunl0")
-    if DEFAULT_GATEWAY then os.execute("ip route replace default via " .. DEFAULT_GATEWAY .. " onlink dev tunl0 table " .. ROUTING_TABLE) end
+    os.execute("ip tunnel add tunl0")
+    os.execute("ip tunnel change tunl0 mode ipip ttl 64 tos inherit pmtudisc")
+    os.execute("ip addr add " .. TUN_IP .. "/32 dev tunl0")
+    os.execute("ip link set tunl0 mtu " .. TUN_MTU .. " up")
 end
 
 -- this seemed nicer than bitshift loops
@@ -126,7 +109,7 @@ function split(str, pat)
 end
 
 function load_routes()
-    if not os.rename(SAVE_FILE,SAVE_FILE) then print("Unable to load " .. SAVE_FILE) return end 
+    if not os.rename(SAVE_FILE,SAVE_FILE) then print("Unable to load " .. SAVE_FILE) return end
     local done, count = 0,0
     for line in io.lines(SAVE_FILE) do
         local row = split(line, "\t")
@@ -151,8 +134,8 @@ assert(udp:settimeout(5))
 udp:setoption("reuseport", true)
 assert(udp:setsockname("*", 520))
 assert(udp:setoption("ip-multicast-loop", false))
-assert(udp:setoption("ip-multicast-if", LISTEN_IP))
-assert(udp:setoption("ip-add-membership", {multiaddr = LISTEN_IP, interface = LISTEN_IP}))
+assert(udp:setoption("ip-multicast-if", TUN_IP))
+assert(udp:setoption("ip-add-membership", {multiaddr = LISTEN_IP, interface = TUN_IP}))
 local SAVE_DELAY = 5
 
 local gc_time = os.time()
